@@ -122,23 +122,34 @@ class OpenRouterAPI {
             const data = await response.json();
 
             // Debug logging to understand response structure
-            console.log('OpenRouter API Response:', data);
+            console.log('OpenRouter API Response:', JSON.stringify(data, null, 2));
 
             // Handle different response structures
             let responseContent = '';
 
             if (data.choices && data.choices.length > 0) {
-                responseContent = data.choices[0]?.message?.content || '';
+                // Process all choices to get data from multiple pages
+                const allChoices = data.choices.map(choice => choice?.message?.content || '').filter(content => content);
+                responseContent = allChoices.join('\n');
+                console.log('Extracted content from all choices:', responseContent);
             } else if (data.output && data.output.text) {
                 responseContent = data.output.text;
+                console.log('Extracted content from output.text:', responseContent);
             } else if (data.content) {
                 responseContent = data.content;
+                console.log('Extracted content from content:', responseContent);
             } else if (typeof data === 'string') {
                 responseContent = data;
+                console.log('Response is string:', responseContent);
             } else {
                 console.warn('Unexpected response structure:', data);
                 responseContent = JSON.stringify(data);
+                console.log('Fallback to JSON stringify:', responseContent);
             }
+
+            // Log final response content length and preview
+            console.log('Final response content length:', responseContent.length);
+            console.log('Response content preview:', responseContent.substring(0, 200) + (responseContent.length > 200 ? '...' : ''));
 
             return responseContent;
         } catch (error) {
@@ -184,12 +195,47 @@ class OpenRouterAPI {
             throw new Error(`Unsupported file type: ${fileType}`);
         }
 
+        // Build the base extraction instructions
+        const baseInstructions = `You are a data extraction expert. Analyze the attached document and extract ALL tabular data into a structured JSON format.
+
+CRITICAL INSTRUCTIONS:
+1. Look for tables with columns and rows
+2. Each table row becomes one object in the "data" array
+3. Use the table headers as JSON property names
+4. Extract EVERY row of data, even if there are hundreds of rows
+5. If there are multiple tables, combine all rows into a single "data" array
+6. Return ONLY valid JSON - no explanations, no markdown, no code blocks
+
+REQUIRED JSON FORMAT:
+{
+  "data": [
+    {
+      "column_name_1": "value1",
+      "column_name_2": "value2",
+      "column_name_3": "value3"
+    }
+  ]
+}
+
+EXTRACTION RULES:
+- Identify table headers (usually in the first row or clearly labeled)
+- Each subsequent row becomes a data object
+- Preserve numerical values, dates, and text exactly as shown
+- If a cell is empty, use an empty string ""
+- Do not skip any rows or columns
+- If the table spans multiple pages, include all data
+
+The document contains tabular data that needs to be extracted completely.`;
+
+        // Append custom prompt if provided, otherwise use base instructions
+        const finalPrompt = customPrompt
+            ? `${baseInstructions}\n\nADDITIONAL INSTRUCTIONS FROM USER:\n${customPrompt}`
+            : baseInstructions;
+
         return [
             {
                 type: 'text',
-                text: `${customPrompt}
-
-Please analyze the attached ${fileType === 'application/pdf' ? 'PDF document' : 'image'} and extract all tabular data. Return the data in JSON format with the structure: {"data": [{ key: value }]}. If there are multiple tables, separate them clearly. Focus on extracting numerical data, text, and maintaining the original structure as much as possible.`
+                text: finalPrompt
             },
             {
                 type: 'file',
